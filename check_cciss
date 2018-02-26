@@ -1,25 +1,25 @@
 #!/bin/sh
 #
 # HP Smart Array Hardware status plugin for Nagios | Written by Simone Rosa
-# (With HP Array Configuration Utility CLI         |  info [X]
-#  hpacucli-x.y.*.rpm )                            | simonerosa
-#                                                  |   {X} it
+# with HP Array Configuration Utility CLI          |  info [X]
+# and  HPE Smart Storage Administrator             | simonerosa
+# (hpacucli / hpssacli)                            |   {X} it
 #
 #
 # Description:
 #
 # This plugin checks hardware status for Smart Array Controllers,
-# using the HP Array Configuration Utility CLI.
+# using the HP Array Configuration Utility CLI / HPE Smart Storage Administrator.
 # (Array, controller, cache, battery, etc...)
 #
 #
-# Usage: ./check_cciss [-v] [-p] [-e <number>] [-E <name>] [-s] [-d]
+# Usage: ./check_cciss [-v] [-p] [-e <number>] [-E <name>] [-b] [-s] [-d]
 #
 #  -v                   = show status and informations about RAID
 #  -p                   = show detail for physical drives
-#  -b			= exclude battery/capacitor/cache status check
 #  -e <number>          = exclude slot number
 #  -E <name>            = exclude chassis name
+#  -b                   = exclude battery/capacitor/cache status check
 #  -s                   = detect controller with HPSA driver (Hewlett Packard Smart Array)
 #  -d                   = use for debug (command line mode)
 #  -h                   = help information
@@ -28,14 +28,23 @@
 #
 # !!!!!! NOTE: !!!!!!
 #
-# HP Array Configuration Utility CLI (hpacucli) need administrator rights.
+# HP Array Configuration Utility CLI (hpacucli) and
+# HPE Smart Storage Administrator (hpssacli) need administrator rights.
+#
 # Please add this line to /etc/sudoers :
 # --------------------------------------------------
 # nagios      ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli
 #
-# !!!!!!!!!!!!!!!!!!!
+# !!!!!!! NOTE: !!!!!!
 #
-# NB: Please update the hpacucli to the current version (today 9.40) or >8.70
+# - Please update the hpacucli to the current version (today 9.40) or >8.70
+# - If you are using hpssacli (today HPE Smart Storage Administrator CLI 2.40.13.0) change hpssacli permissions:
+#     # chmod 555 /usr/sbin/hpssacli  (default are 500 root:root)
+#     # chmod 555 /usr/sbin/hpacucli
+# - HP Proliant G9 work correctly with "hpssacli". Please NOT install "hpacucli"
+# - RHEL7 use "ssacli":
+#     # ln -s /usr/sbin/ssacli /usr/sbin/hpssacli
+#     # and check /etc/sudoers user (example:   nrpe ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli)
 #
 # !!!!!!!!!!!!!!!!!!!
 #
@@ -88,6 +97,14 @@
 #
 #
 # ChangeLog:
+#
+# 2017/04/28 (1.15)
+#          - Added debug for hpacucli/hpssacli section
+#          - Added note for hpssacli (today HPE Smart Storage Administrator CLI)
+#             # chmod 555 /usr/sbin/hpssacli  (default are 500 root:root)
+#             # chmod 555 /usr/sbin/hpacucli
+#          - Added note for RHEL7 (ssacli and sudoers user) 
+#          - Script tested with HP Proliant G9
 #
 # 2017/02/25 (1.14)
 #          - Updated headers for versions from 1.8 to 1.13
@@ -158,7 +175,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 
 PROGNAME=`basename $0`
 PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
-REVISION=`echo '$Revision: 1.13 $' | sed -e 's/[^0-9.]//g'`
+REVISION=`echo '$Revision: 1.15 $' | sed -e 's/[^0-9.]//g'`
 HPSA="0"
 DEBUG="0"
 VERBOSE="0"
@@ -166,6 +183,7 @@ HPPROC="/proc/driver/cciss/cciss"
 HPSCSIPROC="/proc/scsi/scsi"
 COMPAQPROC="/proc/driver/cpqarray/ida"
 hpacucli="/usr/sbin/hpacucli"
+hpssacli="/usr/sbin/hpssacli"
 
 . $PROGPATH/utils.sh
 
@@ -185,14 +203,25 @@ print_usage() {
         echo "  -h                   = help information"
         echo "  -V                   = version information"
         echo ""
-        echo " NOTE:"
+        echo " === NOTE: ==="
         echo ""
-        echo " HP Array Configuration Utility CLI (hpacucli / hpssacli) need administrator rights."
+	echo " HP Array Configuration Utility CLI (hpacucli) and"
+	echo " HPE Smart Storage Administrator (hpssacli) need administrator rights."
+	echo ""
         echo " Please add this line to /etc/sudoers"
         echo " --------------------------------------------------"
         echo " nagios      ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli"
         echo ""
-        echo " NB: Please update the hpacucli to the current version (today 9.40) or >8.70"
+        echo " - Please update the hpacucli to the current version (today 9.40) or >8.70"
+        echo " - If you are using hpssacli (today HPE Smart Storage Administrator CLI 2.40.13.0) change hpssacli permissions:"
+        echo "    # chmod 555 /usr/sbin/hpssacli  (default are 500 root:root)"
+        echo "    # chmod 555 /usr/sbin/hpacucli"
+        echo " - HP Proliant G9 work correctly with \"hpssacli\" Please NOT install \"hpacucli\""
+        echo " - RHEL7 use \"ssacli\":"
+        echo "     # ln -s /usr/sbin/ssacli /usr/sbin/hpssacli"
+        echo "     # and check /etc/sudoers user (example:   nrpe ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli)"
+	echo ""
+	echo " ============="
 }
 
 print_help() {
@@ -200,7 +229,8 @@ print_help() {
         echo ""
         print_usage
         echo ""
-        echo "This plugin checks hardware status for Smart Array Controllers, using the HP Array Configuration Utility CLI."
+        echo "This plugin checks hardware status for Smart Array Controllers,"
+	echo "using the HP Array Configuration Utility CLI / HPE Smart Storage Administrator."
         echo ""
         support
         exit 0
@@ -255,11 +285,21 @@ if test ${status} -eq 1; then
 fi
 
 # Check if "HP Array Utility CLI" is present
+if [ "$DEBUG" = "1" ]; then
+        echo "### Check if \"hpacucli\" is present >>>\n"
+fi
 if [ ! -x $hpacucli ]; then
-        if [ -x /usr/sbin/hpssacli ]; then
+	if [ "$DEBUG" = "1" ]; then
+        	echo "### \"hpacucli\" is NOT present >>>\n"
+		echo "### Check if \"hpssacli\" is present >>>\n"
+	fi
+        if [ -x $hpssacli ]; then
+		if [ "$DEBUG" = "1" ]; then
+		        echo "### \"hpssacli\" is present >>>\n"
+		fi
                 hpacucli='/usr/sbin/hpssacli'
         else
-                echo "ERROR: hpacucli or hpssacli tools should be installed!"
+                echo "ERROR: hpacucli or hpssacli tools should be installed and check sudoers/permissions (see the notes above)"
                 exit $STATE_UNKNOWN
         fi
 fi
