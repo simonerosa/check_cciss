@@ -34,7 +34,7 @@
 #
 # !!!!!!!!!!!!!!!!!!!
 #
-# NB: Please update the hpacucli to the current version (8.70)
+# NB: Please update the hpacucli to the current version (today 9.40) or >8.70
 #
 # !!!!!!!!!!!!!!!!!!!
 #
@@ -77,6 +77,9 @@
 #
 #
 # ChangeLog:
+#
+# 2013/11/20 (1.12)
+#          - Auto-detect the HPSA driver (tested with DL360/380 G6 with Ubuntu 12.04 LTS)
 #
 # 2012/07/16 (1.11)
 #          - Fixed little NRPE description output issue (only in one physicaldrive critical output)
@@ -137,7 +140,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 
 PROGNAME=`basename $0`
 PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
-REVISION=`echo '$Revision: 1.11 $' | sed -e 's/[^0-9.]//g'`
+REVISION=`echo '$Revision: 1.12 $' | sed -e 's/[^0-9.]//g'`
 HPSA="0"
 DEBUG="0"
 VERBOSE="0"
@@ -209,7 +212,7 @@ do
 done
 
 # Use HPSA driver (Hewlett Packard Smart Array)
-if [ "$HPSA" = "1" ]; then
+if [ "$HPSA" = "1" -o -d /sys/bus/pci/drivers/hpsa ]; then
         COMPAQPROC="/proc/scsi/scsi"
 fi
 
