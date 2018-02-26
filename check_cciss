@@ -40,31 +40,46 @@
 #
 # Examples:
 #
+#   ./check_cciss
+# ----------------
+# RAID OK
+#
 #   ./check_cciss -v
+# -------------------
 # RAID OK:  Smart Array 6i in Slot 0 array A logicaldrive 1 (67.8 GB, RAID 1+0, OK)
 #           [Controller Status: OK  Cache Status: OK  Battery Status: OK]
 #
+# RAID CRITICAL - HP Smart Array Failed:  Smart Array 6i in Slot 0 (Embedded) \
+#          array A logicaldrive 1 (33.9 GB, RAID 1, Interim Recovery Mode) \
+#          physicaldrive 1:0 (port 1:id 0 , Parallel SCSI, --- GB, Failed)
+#
+# RAID WARNING - HP Smart Array Rebuilding:  Smart Array 6i in Slot 0 (Embedded) \
+#          array A logicaldrive 1 (33.9 GB, RAID 1, Recovering, 26% complete) \
+#          physicaldrive 1:0 (port 1:id 0 , Parallel SCSI, 36.4 GB, Rebuilding)
+#
 # ./check_cciss -v -p
+# --------------------
 # RAID OK:  Smart Array 6i in Slot 0 (Embedded) array A logicaldrive 1 (33.9 GB, RAID 1, OK)
 #           physicaldrive 2:0 (port 2:id 0 , Parallel SCSI, 36.4 GB, OK)
 #           physicaldrive 2:1 (port 2:id 1 , Parallel SCSI, 36.4 GB, OK)
 #           physicaldrive 1:5 (port 1:id 5 , Parallel SCSI, 72.8 GB, OK, spare)
 #           [Controller Status: OK Cache Status: OK Battery/Capacitor Status: OK]
 #
-#   ./check_cciss
-# RAID OK
+# RAID CRITICAL - HP Smart Array Failed:  Smart Array 6i in Slot 0 (Embedded) \
+#          array A logicaldrive 1 (33.9 GB, RAID 1, Interim Recovery Mode) \
+#          physicaldrive 1:0 (port 1:id 0 , Parallel SCSI, --- GB, Failed) \
+#          physicaldrive 1:1 (port 1:id 1 , Parallel SCSI, 36.4 GB, OK)
 #
-#
-# Another Examples:
-#
-# RAID CRITICAL - HP Smart Array Failed:  Smart Array 6i in Slot 0 array \
-#          A (failed) logicaldrive 1 (67.8 GB, 1+0, Interim Recovery Mode)
-#
-# RAID WARNING - HP Smart Array Rebuilding:  Smart Array 6i in Slot 0 array \
-#          A logicaldrive 1 (67.8 GB, 1+0, Rebuilding)
+# RAID WARNING - HP Smart Array Rebuilding:  Smart Array 6i in Slot 0 (Embedded) \
+#          array A logicaldrive 1 (33.9 GB, RAID 1, Recovering, 26% complete) \
+#          physicaldrive 1:0 (port 1:id 0 , Parallel SCSI, 36.4 GB, Rebuilding) \
+#          physicaldrive 1:1 (port 1:id 1 , Parallel SCSI, 36.4 GB, OK)
 #
 #
 # ChangeLog:
+#
+# 2012/07/16 (1.11)
+#          - Fixed little NRPE description output issue (only in one physicaldrive critical output)
 #
 # 2012/04/04 (1.10)
 #          - Critical states have priority over warning states
@@ -122,7 +137,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 
 PROGNAME=`basename $0`
 PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
-REVISION=`echo '$Revision: 1.10 $' | sed -e 's/[^0-9.]//g'`
+REVISION=`echo '$Revision: 1.11 $' | sed -e 's/[^0-9.]//g'`
 HPSA="0"
 DEBUG="0"
 VERBOSE="0"
@@ -262,9 +277,9 @@ do
 
         # Get "physicaldrive" for slot
         if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
-                check2b=`sudo -u root $hpacucli controller slot=$slot physicaldrive all show 2>&1 | grep "physicaldrive"`
+                check2b=`sudo -u root $hpacucli controller slot=$slot physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive"`
         else
-                check2b=`sudo -u root $hpacucli controller slot=$slot physicaldrive all show 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)"`
+                check2b=`sudo -u root $hpacucli controller slot=$slot physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)"`
         fi
         status=$?
         if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
@@ -304,9 +319,9 @@ do
 
         # Get "physicaldrive" for chassisname
         if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
-                check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" physicaldrive all show 2>&1 | grep "physicaldrive"`
+                check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive"`
         else
-                check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" physicaldrive all show 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)"`
+                check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)"`
         fi
         status=$?
         if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
