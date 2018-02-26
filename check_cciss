@@ -89,6 +89,9 @@
 #
 # ChangeLog:
 #
+# 2017/02/25 (1.14)
+#          - Updated headers for versions from 1.8 to 1.13
+#
 # 2017/01/23 (1.13)
 #          - Support hpssacli in addition to hpacucli
 #          - Added cli flag '-b' to exclude battery/capacitor/cache status check
