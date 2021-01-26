@@ -25,29 +25,6 @@
 #  -h                   = help information
 #  -V                   = version information
 #
-#
-# !!!!!! NOTE: !!!!!!
-#
-# HP Array Configuration Utility CLI (hpacucli) and
-# HPE Smart Storage Administrator (hpssacli) need administrator rights.
-#
-# Please add this line to /etc/sudoers :
-# --------------------------------------------------
-# nagios      ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli
-#
-# !!!!!!! NOTE: !!!!!!
-#
-# - Please update the hpacucli to the current version (today 9.40) or >8.70
-# - If you are using hpssacli (today HPE Smart Storage Administrator CLI 2.40.13.0) change hpssacli permissions:
-#     # chmod 555 /usr/sbin/hpssacli  (default are 500 root:root)
-#     # chmod 555 /usr/sbin/hpacucli
-# - HP Proliant G9 work correctly with "hpssacli". Please NOT install "hpacucli"
-# - RHEL7 use "ssacli":
-#     # ln -s /usr/sbin/ssacli /usr/sbin/hpssacli
-#     # and check /etc/sudoers user (example:   nrpe ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli)
-#
-# !!!!!!!!!!!!!!!!!!!
-#
 # Examples:
 #
 #   ./check_cciss
@@ -90,7 +67,7 @@
 #
 # RAID OK:  Smart Array 6i in Slot 0 (Embedded) array A logicaldrive 1 (33.9 GB, RAID 1, OK) [Controller Status: OK]
 #
-#  [insted of]
+#  [instead of]
 # RAID CRITICAL - HP Smart Array Failed:  Smart Array 6i in Slot 0 (Embedded) \
 #                 Controller Status: OK Cache Status: Temporarily Disabled \
 #                 Battery/Capacitor Status: Failed (Replace Batteries/Capacitors)
@@ -98,12 +75,17 @@
 #
 # ChangeLog:
 #
+# 2021/01/25 (1.15.1)
+#          - Refactor code to pass shellcheck
+#          - Added the ability to evaluate all controller slots
+#          - Better checks for utils.sh, hp tools (prefer ssacli over hpassacli, hpacucli)
+#          - Tested on: ProLiant BL465c Gen8/P220i, ProLiant DL360 Gen9/H240ar, ProLiant DL20 Gen9/B140i
 # 2017/04/28 (1.15)
 #          - Added debug for hpacucli/hpssacli section
 #          - Added note for hpssacli (today HPE Smart Storage Administrator CLI)
 #             # chmod 555 /usr/sbin/hpssacli  (default are 500 root:root)
 #             # chmod 555 /usr/sbin/hpacucli
-#          - Added note for RHEL7 (ssacli and sudoers user) 
+#          - Added note for RHEL7 (ssacli and sudoers user)
 #          - Script tested with HP Proliant G9
 #
 # 2017/02/25 (1.14)
@@ -169,280 +151,303 @@
 #
 # 2005/10/06 (1.0)
 #          - First production version
-# 
+#
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 
-PROGNAME=`basename $0`
-PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
-REVISION=`echo '$Revision: 1.15 $' | sed -e 's/[^0-9.]//g'`
-HPSA="0"
-DEBUG="0"
-VERBOSE="0"
-HPPROC="/proc/driver/cciss/cciss"
-HPSCSIPROC="/proc/scsi/scsi"
-COMPAQPROC="/proc/driver/cpqarray/ida"
-hpacucli="/usr/sbin/hpacucli"
-hpssacli="/usr/sbin/hpssacli"
+PROGNAME=$(basename "$0")
+PROGPATH=$(dirname "$0")
+REVISION=$(echo '$ Revision: 1.15 $' | sed -e 's/[^0-9.]//g')
+HPSA='0'
+DEBUG='0'
+VERBOSE='0'
+HPPROC='/proc/driver/cciss/cciss'
+COMPAQPROC='/proc/driver/cpqarray/ida'
 
-. $PROGPATH/utils.sh
+# shellcheck disable=SC1091 disable=SC1090
+if [ -x "${PROGPATH}"/utils.sh ]; then . "${PROGPATH}"/utils.sh;
+elif [ -x /usr/lib64/nagios/plugins/utils.sh ]; then . /usr/lib64/nagios/plugins/utils.sh;
+elif [ -x /usr/lib/nagios/plugins/utils.sh ]; then . /usr/lib/nagios/plugins/utils.sh;
+else
+  echo 'Could not find utils.sh. Is the nagios-common package installed?'
+  exit 3
+fi
 
 print_usage() {
-        echo ""
-        echo "Usage: $PROGNAME [-v] [-p] [-e <number>] [-E <name>] [-b] [-s] [-d]"
-        echo "Usage: $PROGNAME [-h]"
-        echo "Usage: $PROGNAME [-V]"
-        echo ""
-        echo "  -v                   = show status and informations about RAID"
-        echo "  -p                   = show detail for physical drives"
-        echo "  -e <number>          = exclude slot number"
-        echo "  -E <name>            = exclude chassis name"
-        echo "  -b                   = exclude battery/capacitor/cache status check"
-        echo "  -s                   = detect controller with HPSA driver (Hewlett Packard Smart Array)"
-        echo "  -d                   = use for debug (command line mode)"
-        echo "  -h                   = help information"
-        echo "  -V                   = version information"
-        echo ""
-        echo " === NOTE: ==="
-        echo ""
-	echo " HP Array Configuration Utility CLI (hpacucli) and"
-	echo " HPE Smart Storage Administrator (hpssacli) need administrator rights."
-	echo ""
-        echo " Please add this line to /etc/sudoers"
-        echo " --------------------------------------------------"
-        echo " nagios      ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli"
-        echo ""
-        echo " - Please update the hpacucli to the current version (today 9.40) or >8.70"
-        echo " - If you are using hpssacli (today HPE Smart Storage Administrator CLI 2.40.13.0) change hpssacli permissions:"
-        echo "    # chmod 555 /usr/sbin/hpssacli  (default are 500 root:root)"
-        echo "    # chmod 555 /usr/sbin/hpacucli"
-        echo " - HP Proliant G9 work correctly with \"hpssacli\" Please NOT install \"hpacucli\""
-        echo " - RHEL7 use \"ssacli\":"
-        echo "     # ln -s /usr/sbin/ssacli /usr/sbin/hpssacli"
-        echo "     # and check /etc/sudoers user (example:   nrpe ALL=NOPASSWD: /usr/sbin/hpacucli, /usr/sbin/hpssacli)"
-	echo ""
-	echo " ============="
+  echo
+  echo "Usage: $PROGNAME [-v] [-p] [-e <number>] [-E <name>] [-b] [-s] [-d]"
+  echo "Usage: $PROGNAME [-h]"
+  echo "Usage: $PROGNAME [-V]"
+  echo
+  echo "  -v                   = show status and informations about RAID"
+  echo "  -p                   = show detail for physical drives"
+  echo "  -e <number>          = exclude slot number"
+  echo "  -E <name>            = exclude chassis name"
+  echo "  -b                   = exclude battery/capacitor/cache status check"
+  echo "  -s                   = detect controller with HPSA driver (Hewlett Packard Smart Array)"
+  echo "  -d                   = use for debug (command line mode)"
+  echo "  -h                   = help information"
+  echo "  -V                   = version information"
+  echo
+  echo " === NOTE: ==="
+  echo
+  echo " HP Array Configuration Utility CLI (hpacucli) and"
+  echo " HPE Smart Storage Administrator (ssacli/hpssacli) need administrator rights."
+  echo
+  echo " Please determine the right utility CLI and grant sudo rights to nagios"
+  echo " # command -v ssacli || command -v hpssacli || command -v hpacucli"
+  echo
+  echo " and then Please add this line to /etc/sudoers (user might vary)"
+  echo " --------------------------------------------------"
+  echo " nagios      ALL=NOPASSWD: <path_to_utility_cli>"
+  echo
+  echo " Verify execute permissions for all users"
+  echo
+  echo " # chmod 555 <path_to_utility_cli>"
+  echo
 }
 
 print_help() {
-        print_revision $PROGNAME $REVISION
-        echo ""
-        print_usage
-        echo ""
-        echo "This plugin checks hardware status for Smart Array Controllers,"
-	echo "using the HP Array Configuration Utility CLI / HPE Smart Storage Administrator."
-        echo ""
-        support
-        exit 0
+  print_revision "$PROGNAME" "$REVISION"
+  print_usage
+  echo 'This plugin checks hardware status for Smart Array Controllers,'
+  echo 'using the HP Array Configuration Utility CLI / HPE Smart Storage Administrator.'
+  echo
+  support
+  exit 0
 }
 
 while getopts "N:cvpbsde:E:Vh" options
 do
-    case $options in
-      N)  ;;
-      c)  ;;
-      v)  VERBOSE=1;;
-      p)  PHYSICAL_DRIVE=1;;
-      s)  HPSA=1;;
-      d)  DEBUG=1;;
-      e)  EXCLUDE_SLOT=1
-          excludeslot="$OPTARG";;
-      E)  EXCLUDE_CH=1
-          excludech="$OPTARG";;
-      b)  EXCLUDE_BATTERY=1;;
-      V)  print_revision $PROGNAME $REVISION
-          exit 0;;
-      h)  print_help
-          exit 0;;
-      \?) print_usage
-          exit 0;;
-      *)  print_usage
-          exit 0;;
+  case $options in
+    N)  ;;
+    c)  ;;
+    v)  VERBOSE=1;;
+    p)  PHYSICAL_DRIVE=1;;
+    s)  HPSA=1;;
+    d)  DEBUG=1;;
+    e)  EXCLUDE_SLOT=1
+        excludeslot="$OPTARG";;
+    E)  EXCLUDE_CH=1
+        excludech="$OPTARG";;
+    b)  EXCLUDE_BATTERY=1;;
+    V)  print_revision "$PROGNAME" "$REVISION"
+        exit 0;;
+    h)  print_help
+        exit 0;;
+    \?) print_usage
+        exit 0;;
+    *)  print_usage
+        exit 0;;
   esac
 done
 
 # Use HPSA driver (Hewlett Packard Smart Array)
-if [ "$HPSA" = "1" -o -d /sys/bus/pci/drivers/hpsa ]; then
-        COMPAQPROC="/proc/scsi/scsi"
+if [ "$HPSA" = '1' ] || [ -d /sys/bus/pci/drivers/hpsa ]; then
+  COMPAQPROC='/proc/scsi/scsi'
 fi
 
 # Check if "HP Smart Array" is present
-raid=`cat $HPPROC* 2>&1`
+raid=$(cat $HPPROC* 2>&1)
 status=$?
-if [ "$DEBUG" = "1" ]; then
-        echo "### Check if \"HP Smart Array\" ($HPPROC) is present >>>\n"${raid}"\n"
+
+if [ "$DEBUG" = '1' ]; then
+  echo "### Check if \"HP Smart Array\" ($HPPROC) is present >>>"
+  echo "$raid"
 fi
+
 if test ${status} -eq 1; then
-        raid=`cat $COMPAQPROC* 2>&1`
-        status=$?
-        if [ "$DEBUG" = "1" ]; then
-                echo "### Check if \"HP Smart Array\" ($COMPAQPROC) is present >>>\n"${raid}"\n"
-        fi
-        if test ${status} -eq 1; then
-                echo "RAID UNKNOWN - HP Smart Array not found"
-                exit $STATE_UNKNOWN
-        fi
+  raid=$(cat $COMPAQPROC* 2>&1)
+  status=$?
+  if [ "$DEBUG" = '1' ]; then
+    echo "### Check if \"HP Smart Array\" ($COMPAQPROC) is present >>>"
+    echo "$raid"
+  fi
+  if test ${status} -eq 1; then
+    echo 'RAID UNKNOWN - HP Smart Array not found'
+    exit "$STATE_UNKNOWN"
+  fi
 fi
 
 # Check if "HP Array Utility CLI" is present
 if [ "$DEBUG" = "1" ]; then
-        echo "### Check if \"hpacucli\" is present >>>\n"
+  echo '### Looking for a HP Array Utility CLI tool >>>'
 fi
-if [ ! -x $hpacucli ]; then
-	if [ "$DEBUG" = "1" ]; then
-        	echo "### \"hpacucli\" is NOT present >>>\n"
-		echo "### Check if \"hpssacli\" is present >>>\n"
-	fi
-        if [ -x $hpssacli ]; then
-		if [ "$DEBUG" = "1" ]; then
-		        echo "### \"hpssacli\" is present >>>\n"
-		fi
-                hpacucli='/usr/sbin/hpssacli'
-        else
-                echo "ERROR: hpacucli or hpssacli tools should be installed and check sudoers/permissions (see the notes above)"
-                exit $STATE_UNKNOWN
-        fi
+
+if command -v ssacli > /dev/null; then
+  hparraycli=$(command -v ssacli);
+elif command -v hpssacli > /dev/null; then
+  hparraycli=$(command -v hpssacli);
+elif command -v hpacucli > /dev/null; then
+  hparraycli=$(command -v hpacucli);
+else
+  echo 'ERROR: HP Array tools should be installed and check sudoers/permissions (see the notes above)'
+  exit "$STATE_UNKNOWN"
+fi
+
+if [ "$DEBUG" = "1" ]; then
+  echo "### Found HP Array CLI - $hparraycli >>>"
 fi
 
 # Check if "HP Controller" work correctly
-check=`sudo -u root $hpacucli controller all show status 2>&1`
+raw_status_output=$(sudo -u root "$hparraycli" controller all show status 2>&1)
 status=$?
+check=$raw_status_output
+
 if [ "$DEBUG" = "1" ]; then
-        echo "### Check if \"HP Controller\" work correctly >>>\n"${check}"\n"
+  echo '### Check if "HP Controller" work correctly >>>'
+  echo "$check"
 fi
 if test ${status} -ne 0; then
-        echo "RAID UNKNOWN - $hpacucli did not execute properly : "${check}
-        exit $STATE_UNKNOWN
+  echo "RAID UNKNOWN - $hparraycli did not execute properly : "
+  echo "$check"
+  exit "$STATE_UNKNOWN"
 fi
+
+controller_status=$(echo "$raw_status_output" | grep 'Controller Status:' | sed -e 's/^[[:space:]]*//')
 
 # Get "Slot" & exclude slot needed
 if [ "$EXCLUDE_SLOT" = "1" ]; then
-        slots=`echo ${check} | egrep -o "Slot \w" | awk '{print $NF}' | grep -v "$excludeslot"`
+  slots=$(echo "$check" | grep -E -o "Slot [0-9]{1}[a-zA-Z]?" | awk '{print $NF}' | grep -v "$excludeslot")
 else
-        slots=`echo ${check} | egrep -o "Slot \w" | awk '{print $NF}'`
+  slots=$(echo "$check" | grep -E -o "Slot [0-9]{1}[a-zA-Z]?" | awk '{print $NF}')
 fi
+
 if [ "$DEBUG" = "1" ]; then
-        echo "### Get \"Slot\" & exclude slot not needed >>>\n"${slots}"\n"
+  echo '### Get "Slot" & exclude slot not needed >>>'
+  echo "$slots"
 fi
+
 for slot in $slots
 do
-        # Get "logicaldrive" for slot
-        check2b=`sudo -u root $hpacucli controller slot=$slot logicaldrive all show 2>&1`
-        status=$?
-        if test ${status} -ne 0; then
-                echo "RAID UNKNOWN - $hpacucli did not execute properly : "${check2b}
-                exit $STATE_UNKNOWN
-        fi
-        check2="$check2$check2b"
-        if [ "$DEBUG" = "1" ]; then
-                echo "### Get \"logicaldrive\" for slot >>>\n"${check2b}"\n"
-        fi
+  # Get "logicaldrive" for slot
+  check2b=$(sudo -u root "$hparraycli" controller slot="$slot" logicaldrive all show 2>&1)
+  status=$?
+  if test ${status} -ne 0; then
+    echo "RAID UNKNOWN - $hparraycli did not execute properly : $check2b"
+    exit "$STATE_UNKNOWN"
+  fi
+  check2="$check2$check2b"
+  if [ "$DEBUG" = "1" ]; then
+    echo '### Get "logicaldrive" for slot >>>'
+    echo "$check2b"
+  fi
 
-        # Get "physicaldrive" for slot
-        if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
-                check2b=`sudo -u root $hpacucli controller slot=$slot physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive"`
-        else
-                check2b=`sudo -u root $hpacucli controller slot=$slot physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)"`
-        fi
-        status=$?
-        if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
-                if test ${status} -ne 0; then
-                        echo "RAID UNKNOWN - $hpacucli did not execute properly : "${check2b}
-                        exit $STATE_UNKNOWN
-                fi
-        fi
-        check2="$check2$check2b"
-        if [ "$DEBUG" = "1" ]; then
-                echo "### Get \"physicaldrive\" for slot >>>\n"${check2b}"\n"
-        fi
+  # Get "physicaldrive" for slot
+  if [ "$PHYSICAL_DRIVE" = "1" ] || [ "$DEBUG" = "1" ]; then
+    check2b=$(sudo -u root "$hparraycli" controller slot="$slot" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive")
+  else
+    check2b=$(sudo -u root "$hparraycli" controller slot="$slot" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)")
+  fi
+  status=$?
+  if [ "$PHYSICAL_DRIVE" = "1" ] || [ "$DEBUG" = "1" ]; then
+    if test ${status} -ne 0; then
+      echo "RAID UNKNOWN - $hparraycli did not execute properly : $check2b"
+      exit "$STATE_UNKNOWN"
+    fi
+  fi
+  check2="$check2$check2b"
+  if [ "$DEBUG" = "1" ]; then
+    echo '### Get "physicaldrive" for slot >>>'
+    echo "$check2b"
+  fi
 done
 
 # Get "Chassis" & exclude chassis not needed
 if [ "$EXCLUDE_CH" = "1" ]; then
-        chassisnames=`echo ${check} | grep -v "in a scenario of" | egrep -o "in \w+" | egrep -v "Slot" | awk '{print $NF}' | grep -v "$excludech"`
+  chassisnames=$(echo "$check" | grep -v "in a scenario of" | grep -E -o "in \w+" | grep -E -v "Slot" | awk '{print $NF}' | grep -v "$excludech")
 else
-        chassisnames=`echo ${check} | grep -v "in a scenario of" | egrep -o "in \w+" | egrep -v "Slot" | awk '{print $NF}'`
+  chassisnames=$(echo "$check" | grep -v "in a scenario of" | grep -E -o "in \w+" | grep -E -v "Slot" | awk '{print $NF}')
 fi
 if [ "$DEBUG" = "1" ]; then
-        echo "### Get \"Chassis\" & exclude chassis not needed >>>\n"${chassisnames}"\n"
+  echo '### Get "chassis" & exclude chassis not needed >>>'
+  echo "$chassisnames"
 fi
+
 for chassisname in $chassisnames
 do
-        # Get "logicaldrive" for chassisname
-        check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" logicaldrive all show 2>&1`
-        status=$?
-        if test ${status} -ne 0; then
-                echo "RAID UNKNOWN - $hpacucli did not execute properly : "${check2b}
-                exit $STATE_UNKNOWN
-        fi
-        check2="$check2$check2b"
-        if [ "$DEBUG" = "1" ]; then
-                echo "### Get \"logicaldrive\" for chassisname >>>\n"${check2b}"\n"
-        fi
+  # Get "logicaldrive" for chassisname
+  check2b=$(sudo -u root "$hparraycli" controller chassisname="$chassisname" logicaldrive all show 2>&1)
+  status=$?
+  if test ${status} -ne 0; then
+    echo "RAID UNKNOWN - $hparraycli did not execute properly : $check2b"
+    exit "$STATE_UNKNOWN"
+  fi
+  check2="$check2$check2b"
+  if [ "$DEBUG" = "1" ]; then
+    echo '### Get "logicaldrive" for chassisname >>>'
+    echo "$check2b"
+  fi
 
-        # Get "physicaldrive" for chassisname
-        if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
-                check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive"`
-        else
-                check2b=`sudo -u root $hpacucli controller chassisname="$chassisname" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)"`
-        fi
-        status=$?
-        if [ "$PHYSICAL_DRIVE" = "1" -o "$DEBUG" = "1" ]; then
-                if test ${status} -ne 0; then
-                        echo "RAID UNKNOWN - $hpacucli did not execute properly : "${check2b}
-                        exit $STATE_UNKNOWN
-                fi
-        fi
-        check2="$check2$check2b"
-        if [ "$DEBUG" = "1" ]; then
-                echo "### Get \"physicaldrive\" for chassisname >>>\n"${check2b}"\n"
-        fi
+  # Get "physicaldrive" for chassisname
+  if [ "$PHYSICAL_DRIVE" = "1" ] || [ "$DEBUG" = "1" ]; then
+    check2b=$(sudo -u root "$hparraycli" controller chassisname="$chassisname" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive")
+  else
+    check2b=$(sudo -u root "$hparraycli" controller chassisname="$chassisname" physicaldrive all show | sed -e 's/\?/\-/g' 2>&1 | grep "physicaldrive" | grep "\(Failure\|Failed\|Rebuilding\)")
+  fi
+  status=$?
+
+  if [ "$PHYSICAL_DRIVE" = "1" ] || [ "$DEBUG" = "1" ]; then
+    if test ${status} -ne 0; then
+      echo "RAID UNKNOWN - $hparraycli did not execute properly : $check2b"
+      exit "$STATE_UNKNOWN"
+    fi
+  fi
+
+  check2="$check2$check2b"
+
+  if [ "$DEBUG" = "1" ]; then
+    echo '### Get "physicaldrive" for chassisname >>>'
+    echo "$check2b"
+  fi
 done
 
 # Check STATUS
 if [ "$DEBUG" = "1" ]; then
-       echo "### Check STATUS >>>"
+  echo "### Check STATUS >>>"
 fi
 
 # Omit battery/capacitor/cache status check if requested
 if [ "$EXCLUDE_BATTERY" = "1" ]; then
-       check=`echo "$check" | grep -v 'Battery/Capacitor Status: Failed (Replace Batteries/Capacitors)'`
-       check=`echo "$check" | grep -v 'Cache Status: Temporarily Disabled'`
+  check=$(echo "$check" | grep -v 'Battery/Capacitor Status: Failed (Replace Batteries/Capacitors)')
+  check=$(echo "$check" | grep -v 'Cache Status: Temporarily Disabled')
 fi
 
-if echo ${check} | egrep Failed >/dev/null; then
-        echo "RAID CRITICAL - HP Smart Array Failed: "${check} | egrep Failed
-        exit $STATE_CRITICAL
-elif echo ${check} | egrep Disabled >/dev/null; then
-        echo "RAID CRITICAL - HP Smart Array Problem: "${check} | egrep Disabled
-        exit $STATE_CRITICAL
-elif echo ${check2} | egrep Failed >/dev/null; then
-        echo "RAID CRITICAL - HP Smart Array Failed: "${check2} | egrep Failed
-        exit $STATE_CRITICAL
-elif echo ${check2} | egrep Failure >/dev/null; then
-        echo "RAID WARNING - Component Failure: "${check2} | egrep Failure
-        exit $STATE_WARNING
-elif echo ${check2} | egrep Rebuild >/dev/null; then
-        echo "RAID WARNING - HP Smart Array Rebuilding: "${check2} | egrep Rebuild
-        exit $STATE_WARNING
-elif echo ${check2} | egrep Recover >/dev/null; then
-        echo "RAID WARNING - HP Smart Array Recovering: "${check2} | egrep Recover
-        exit $STATE_WARNING
-elif echo ${check} | egrep "Cache Status: Temporarily Disabled" >/dev/null; then
-        echo "RAID WARNING - HP Smart Array Cache Disabled: "${check}
-        exit $STATE_WARNING
-elif echo ${check} | egrep FIRMWARE >/dev/null; then
-        echo "RAID WARNING - "${check}
-        exit $STATE_WARNING
+check=$(echo "$check" | tr -d '\n' | tr -s ' ')
+check2=$(echo "$check2" | tr -d '\n' | tr -s ' ')
+
+# Because we quote variables, we'll need to resort to tr for a prettier output
+if echo "$check" | grep -E Failed >/dev/null; then
+  echo "RAID CRITICAL - HP Smart Array Failed: $check" | grep -E Failed
+  exit "$STATE_CRITICAL"
+elif echo "$check" | grep -E Disabled >/dev/null; then
+  echo "RAID CRITICAL - HP Smart Array Problem: $check" | grep -E Disabled
+  exit "$STATE_CRITICAL"
+elif echo "$check2" | grep -E Failed >/dev/null; then
+  echo "RAID CRITICAL - HP Smart Array Failed: $check2" | grep -E Failed
+  exit "$STATE_CRITICAL"
+elif echo "$check2" | grep -E Failure >/dev/null; then
+  echo "RAID WARNING - Component Failure: $check2" | grep -E Failure
+  exit "$STATE_WARNING"
+elif echo "$check2" | grep -E Rebuild >/dev/null; then
+  echo "RAID WARNING - HP Smart Array Rebuilding: $check2" | grep -E Rebuild
+  exit "$STATE_WARNING"
+elif echo "$check2" | grep -E Recover >/dev/null; then
+  echo "RAID WARNING - HP Smart Array Recovering: $check2" | grep -E Recover
+  exit "$STATE_WARNING"
+elif echo "$check" | grep -E "Cache Status: Temporarily Disabled" >/dev/null; then
+  echo "RAID WARNING - HP Smart Array Cache Disabled: $check"
+  exit "$STATE_WARNING"
+elif echo "$check" | grep -E FIRMWARE >/dev/null; then
+  echo "RAID WARNING - $check"
+  exit "$STATE_WARNING"
 else
-        if [ "$DEBUG" = "1" -o "$VERBOSE" = "1" ]; then
-                check3=`echo "${check}" | egrep Status`
-                check3=`echo ${check3}`
-                echo "RAID OK: "${check2}" ["${check3}"]"
-        else
-                echo "RAID OK"
-        fi
-        exit $STATE_OK
+  if [ "$DEBUG" = "1" ] || [ "$VERBOSE" = "1" ]; then
+    echo "RAID OK: ${check2} [${controller_status}]"
+  else
+    echo "RAID OK"
+  fi
+  exit "$STATE_OK"
 fi
 
-exit $STATE_UNKNOWN
+exit "$STATE_UNKNOWN"
