@@ -157,7 +157,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 
 PROGNAME=$(basename "$0")
 PROGPATH=$(dirname "$0")
-REVISION=$(echo '$ Revision: 1.15 $' | sed -e 's/[^0-9.]//g')
+REVISION=$(echo '$ Revision: 1.15.1 $' | sed -e 's/[^0-9.]//g')
 HPSA='0'
 DEBUG='0'
 VERBOSE='0'
